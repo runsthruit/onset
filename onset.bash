@@ -1,102 +1,192 @@
 #! /bin/bash
 
-function _onset ()
+function __onset ()
+#
+#
+#
 {
 
-	_onset_init_shell
+declare {ERR,FNCS,FNC,SHOPT_HISTORY_BAK}=
 
-	_onset_init_vars
-
-	_onset_init_trap
-
-	_onset_trap_pipe_n_redir
-
-	_onset_trap_sourced
-
-}
-
-function _onset_trap_pipe_n_redir ()
-{
-	declare ERR_PIPE_N_DIR=2
-	[ -n "${ALLOW_PIPE_N_REDIR+IS_DEF}" ] && return 0
-	[ "${#BASH_SOURCE[@]}" -ne 0 ] \
-		|| {
-			echo "${0}: This script was piped/redirected to bash, which is not allowed! ( Declare ALLOW_PIPE_N_REDIR to override. )" 1>&2
-			exit "${ERR_PIPE_N_DIR}"
-		}
-}
-
-function _onset_trap_sourced ()
-{
-	declare ERR_SOURCED=3
-	[ -n "${ALLOW_SOURCED+IS_DEF}" ] \
-		&& return 0
-	[ "${BASH_SOURCE[$((${#BASH_SOURCE[@]}-1))]}" == "${0}" ] \
-		|| {
-			echo "${0}: Sourcing this script is not allowed! ( Declare ALLOW_SOURCED to override. )" 1>&2
-			return "${ERR_SOURCED}"
-		}
-}
-
-function out ()
-#
-#
-#
-{ printf "${@}"; }
-
-function err ()
-#
-#
-#
-{ printf "${_onset_name}: ${@}" 1>&2; }
+SHOPT_HISTORY_BAK="$( shopt -p -o history )"
+shopt -u -o history
 
 function end ()
 #
 #
 #
 {
-	declare ERR="${?}"
-	err "${@}"
-	exit "${ERR}"
+	declare ERR="${1}"
+	__onset_f_trap "${ERR}" EXIT
 }
 
-function _onset_init_trap ()
+function out ()
+#
+#
+#
+{ printf "${@:-}"; }
+
+function err ()
+#
+#
+#
+{ printf "${@:-}" 1>&2; }
+
+function msg ()
+#
+#
+#
 {
-	trap _onset_trap \
-		EXIT SIGHUP SIGINT SIGQUIT SIGILL SIGTRAP SIGABRT SIGEMT SIGFPE \
-		SIGBUS SIGSEGV SIGSYS SIGPIPE SIGALRM SIGTERM SIGURG SIGSTOP \
-		SIGTSTP SIGCONT SIGCHLD SIGTTIN SIGTTOU SIGIO SIGXCPU SIGXFSZ \
-		SIGVTALRM SIGPROF SIGWINCH SIGINFO SIGUSR1 SIGUSR2
+	declare {TAG,FRM,MSG}=
+	TAG="${1:-}"; shift
+	FRM="${1:-}"; shift
+	MSG=( "${@:-}" )
+	printf "${__onset_v_base:-${BASH_SOURCE[0]##*/}}${TAG} ${FRM}" "${MSG[@]}" 1>&2
 }
 
-function _onset_trap ()
+function catmsg ()
+#
+#
+#
+{
+	declare {TAG,FRM,MSGS}=
+	TAG="${1}"; shift
+	FRM="${1}"; shift
+	MSGS=( "${@:--}" )
+	cat "${MSGS[@]}" |
+	while IFS="${NLN}" read -r MSG
+	do
+		msg "${TAG}" "${FRM}" "${MSG}"
+	done #\
+	#	< <( cat "${MSGS[@]}" )
+}
+
+function __onset_f_log ()
+{
+        [ -r /dev/fd/6 ] || exec 6>&0
+        [ -w /dev/fd/7 ] || exec 7>&1
+        [ -w /dev/fd/8 ] || exec 8>&2
+        exec 1> >( tee "${__onset_v_tdir_log}" )
+}
+
+function __onset_f_trap_flag ()
+#
+#
+#
+{
+	declare FLG="${1}"
+	eval '[ "${__onset_v_flg_'"${FLG}"'}" -ne 0 -a "${__onset_v_allow_'"${FLG}"'}" == "0" ] || return 0'
+	eval 'end "${__onset_v_err_'"${FLG}"'}"'
+}
+
+function __onset_f_init_trap ()
+#
+#
+#
+{
+	declare {FNC,SIG,TAG}=
+	FNC=__onset_f_trap
+	for SIG in ${__onset_v_sigs[*]:-EXIT}
+	do
+		TAG="$( echo "${SIG}" | tr "[:upper:]" "[:lower:]" )"
+		eval "trap '${FNC} ${SIG}; echo \"{{{ ${SIG} }}}\" 1>&2' ${SIG}"
+	done
+}
+
+function __onset_f_trap ()
+#
+#
+#
 {
 	declare ERR="${?}"
+	declare CMD="${BASH_COMMAND}"
+	declare {SIG,I,CALL_{LIN,FNC,SRC}}=
+	SIG="${1}"
+	shift
+	[[ "${SIG}" =~ ^[0-9]+$ ]] && { ERR="${SIG}"; SIG=ERROR; shift; } || :
+	declare MSGS=()
+	I=0
 	[ "${ERR}" -eq 0 ] \
-		|| {
-			declare MSG=
-			set | egrep "^((BASH_SOURCE|FUNCNAME|PIPESTATUS|BASH_LINENO)(=|_BAK=)|BASH_ARG[CV]=)" |
-				while read MSG
-				do
-					: #err "ENV: %s\n" "${MSG}"
-				done
-			: #err "ENV: ?=${ERR}\n"
-			for I in {0..8}; do MSG="$(caller ${I})" && err "Caller ( ${MSG} )\n" || break; done
-		}
-	trap - EXIT
-	_onset_bail
-	exit "${ERR}"
+	|| [ "${SIG}" == "ERROR" ] \
+	&& {
+		printf "\n" 1>&2
+		IFS="${NLN}"
+		MSGS=( $( printf "${__onset_v_errs[${ERR}]:-${@:-END:${ERR}}}\n" ) )
+		IFS="${IFS_BAK}"
+		msg - "%s\n" "${MSGS[@]}"
+	} \
+	|| {
+		printf "\n" 1>&2
+		msg - "%s { %s } [ %s ]\n" "${SIG}" "${CMD:-UNKNOWN}" "${ERR}"
+		while :
+		do
+			CALL_SRC="$( caller ${I} || : )"
+			[ -n "${CALL_SRC:-}" ] || break
+			[[ "${CALL_SRC}" =~ ([0-9]+)[[:blank:]]+(.*) ]]
+			CALL_LIN="${BASH_REMATCH[1]}"
+			CALL_SRC="${BASH_REMATCH[2]}"
+			[[ "${CALL_SRC}" =~ ([^[:blank:]]+)[[:blank:]]+(.*) ]]
+			CALL_FNC="${BASH_REMATCH[1]}"
+			CALL_SRC="${BASH_REMATCH[2]}"
+			: $((I++))
+			[ "end" != "${CALL_FNC}" ] || continue
+			err "%s:%s:%s: ..\n" "${CALL_SRC#./}" "${CALL_FNC}" "${CALL_LIN}"
+		done
+	}
+	case "${SIG}" in
+	( * ) {
+		__onset_f_bail "${ERR}" "${SIG}"
+	};;
+	esac
 }
 
-function _onset_bail ()
+function __onset_f_bail ()
+#
+#
+#
 {
-
-	eval "${SHOPT_BAK}"
-	eval "${SHELLOPT_BAK}"
-
+	declare ERR="${1:-0}"
+	declare SIG="${2:-EXIT}"
+	trap - EXIT
+	declare UNSET="
+		trap - ${__onset_v_sigs[*]:-EXIT}
+		unset end out {,cat}msg $(
+			{
+				compgen -A function | egrep -v "^(__onset|__onset_f_show_variables)\$";
+				compgen -A variable | egrep -v "^__onset_v_.*_bak\$";
+			} | grep ^__onset | sort -r | paste -sd" " -
+		) || :
+		${__onset_v_shopt_bak}
+		${__onset_v_shellopt_bak}
+		rm -rf "${__onset_v_tdir_sec}"*
+		${__onset_v_traps_bak}
+	"
+	#echo "${UNSET}" | less
+	eval "${UNSET}"
+	trap -p 1>&2
+	[[ $- == *i* ]] \
+	&& {
+		return ${ERR}
+	} \
+	|| {
+		#echo exit ${ERR} 1>&2
+		exit ${ERR}
+	}
 }
 
-function _onset_init_vars ()
+function __onset_f_dts_loc_now ()
+#
+#
+#
+{ date "+%Y-%m-%dT%H:%M:%S" ${@:+"${@}"}; }
+
+function __onset_f_dts_utc_now ()
+#
+#
+#
+{ TZ=UTC date "+%Y-%m-%dT%H:%M:%SZ" ${@:+"${@}"}; }
+
+function __onset_f_init_vars ()
 #
 #
 #
@@ -108,8 +198,7 @@ function _onset_init_vars ()
 	printf -v NLN "\n"
 
 	SED_TYP=gnu
-	{ { sed --version 2>&1 || true; } | grep -qwi gnu; } \
-		|| SED_TYP=bsd
+	{ { sed --version 2>&1 || true; } | grep -qwi gnu; } || SED_TYP=bsd
 	case "${SED_TYP}" in
 		( gnu ) {
 			SED_XRG="-r"
@@ -121,32 +210,77 @@ function _onset_init_vars ()
 		};;
 	esac
 
-	_onset_dts="$(date "+%Y-%m-%dT%H:%M:%S")"
-	_onset_dts_4fs="${_onset_dts//:/-}"
-	_onset_dts_4fs="${_onset_dts_4fs/T/_}"
-	_onset_sess=":${HOSTNAME}:${USER}:$$:${_onset_dts_4fs}:"
-	_onset_rdir="${PWD}"
-	_onset_tdir="${TMPDIR}"
-	_onset_path="${BASH_SOURCE[$((${#BASH_SOURCE[@]}-1))]}"
-	_onset_base="${_onset_path##*/}"
-	[ "${_onset_path}" == "${_onset_base}" ] \
-		&& _onset_sdir="." \
-		|| _onset_sdir="${_onset_path%/*}"
-	cd "${_onset_sdir}" \
-		&& _onset_sdir="${PWD}" \
-		&& cd "${_onset_rdir}"
-	_onset_path="${_onset_sdir}/${_onset_base}"
-	_onset_name="${_onset_base%.bash}"
-	_onset_name="${_onset_name%.sh}"
-	_onset_tdir_sec="${_onset_tdir}/${_onset_name}_${_onset_dts_4fs}_$$"
+	__onset_v_dts_loc="$( __onset_f_dts_loc_now )"
+	__onset_v_dts_loc_4fs="${__onset_v_dts_loc//:/-}"
+	__onset_v_dts_loc_4fs="${__onset_v_dts_loc_4fs/T/_}"
+	__onset_v_dts_utc="$( __onset_f_dts_utc_now )"
+	__onset_v_dts_utc_4fs="${__onset_v_dts_utc//:/-}"
+	__onset_v_dts_utc_4fs="${__onset_v_dts_utc_4fs/T/_}"
+	__onset_v_sess=":${HOSTNAME}:${USER}:$$:${__onset_v_dts_utc_4fs}:"
+	__onset_v_path="${BASH_SOURCE[$((${#BASH_SOURCE[@]}-1))]}"
+	__onset_v_rdir="${PWD}"
+	__onset_v_base="${__onset_v_path##*/}"
+	[ "${__onset_v_path}" == "${__onset_v_base}" ] \
+	&& __onset_v_sdir="." \
+	|| __onset_v_sdir="${__onset_v_path%/*}"
+	cd "${__onset_v_sdir}" \
+	&& __onset_v_sdir="${PWD}" \
+	&& cd "${__onset_v_rdir}"
+	__onset_v_path="${__onset_v_sdir}/${__onset_v_base}"
+	__onset_v_tdir="${TMPDIR}/${__onset_v_base}_${__onset_v_dts_loc_4fs}_$$"
+	__onset_v_tdir_sec="${__onset_v_tdir}/sec"
+	__onset_v_tdir_log="${__onset_v_tdir}/log"
+	__onset_v_tdir_out="${__onset_v_tdir}/out"
+	__onset_v_tdir_err="${__onset_v_tdir}/err"
+
+	__onset_v_traps_bak="${__onset_v_traps_bak:-$( trap -p )}"
+	#__onset_v_sigs=( EXIT ERR DEBUG $( trap -l | grep -ao "SIG[^[:blank:]]*" ) )
+	#__onset_v_sigs=( EXIT $( trap -l | grep -ao "SIG[^[:blank:]]*" ) )
+	__onset_v_sigs=( EXIT ERR SIGINT )
+	__onset_v_flg_pipe_n_redir=0
+	[ "${#BASH_SOURCE[@]}" -ne 0 ] || __onset_v_flg_pipe_n_redir=1
+
+	__onset_v_flg_sourced=0
+	[ "${BASH_SOURCE[0]}" == "${0}" ] || __onset_v_flg_sourced=1
+
+	__onset_v_flg_interactive=0
+	[[ $- != *i* ]] \
+	&& shopt -s -o errexit \
+	|| {
+		__onset_v_flg_interactive=1
+	}
+
+	__onset_tmpv_err=100
+	__onset_v_err_tdir_sec=$((__onset_tmpv_err++))
+	__onset_v_err_pipe_n_redir=$((__onset_tmpv_err++))
+	__onset_v_err_sourced=$((__onset_tmpv_err++))
+	__onset_v_err_interactive=$((__onset_tmpv_err++))
+	__onset_v_err_tdir=$((__onset_tmpv_err++))
+	__onset_v_errs[${__onset_v_err_tdir_sec}]="Could not create secure temporary directory ( ${__onset_v_tdir_sec} )!"
+	__onset_v_errs[${__onset_v_err_pipe_n_redir}]="ONSET was piped/redirected to bash, which is not allowed!\nTo override: { ONSET_ALLOW_PIPE_N_REDIR=1; }"
+	__onset_v_errs[${__onset_v_err_sourced}]="Sourcing ONSET is not allowed!\nTo override: { ONSET_ALLOW_SOURCED=1; }"
+	__onset_v_errs[${__onset_v_err_interactive}]="Loading ONSET in an interactive shell is not allowed!\nTo override: { ONSET_ALLOW_INTERACTIVE=1; }"
+	__onset_v_errs[${__onset_v_err_tdir}]="Could not create temporary directory ( ${__onset_v_tdir} )!"
+
+	__onset_v_debug="$((${ONSET_DEBUG:-0}?1:0))"
+	__onset_v_allow_sourced="$((${ONSET_ALLOW_SOURCED:-0}?1:0))"
+	__onset_v_allow_pipe_n_redir="$((${ONSET_ALLOW_PIPE_N_REDIR:-0}?1:0))"
+	__onset_v_allow_interactive="$((${ONSET_ALLOW_INTERACTIVE:-0}?1:0))"
+
+	mkdir -p "${__onset_v_tdir}" &>/dev/null \
+	&& TMPDIR="${__onset_v_tdir}" \
+	|| end "${__onset_v_err_tdir}"
+	mktemp -d "${__onset_v_tdir_sec}" &>/dev/null \
+	&& TMPDIRSEC="${__onset_v_tdir_sec}" \
+	|| end "${__onset_v_err_tdir_sec}"
 
 	set +a
 
-	mktemp -d "${_onset_tdir_sec}" &>/dev/null || end "Could not Create TempDir Secure [ ${_onset_tdir_sec} ]"
+	unset ${!__onset_tmpv*}
 
 }
 
-function _onset_init_shell ()
+function __onset_f_init_shell ()
 #
 #
 #
@@ -154,7 +288,7 @@ function _onset_init_shell ()
 
 	UMASK="0077"
 
-	SHOPT_TOSET=(
+	__onset_tmpv_shopt_toset=(
 		execfail
 		expand_aliases
 		extdebug
@@ -169,7 +303,7 @@ function _onset_init_shell ()
 		sourcepath
 	)
 
-	SHOPT_UNSET=(
+	__onset_tmpv_shopt_unset=(
 		cdable_vars
 		cdspell
 		checkhash
@@ -181,9 +315,8 @@ function _onset_init_shell ()
 		xpg_echo
 	)
 
-	SHELLOPT_TOSET=(
+	__onset_tmpv_shellopt_toset=(
 		braceexpand
-		errexit
 		errtrace
 		functrace
 		hashall
@@ -191,7 +324,7 @@ function _onset_init_shell ()
 		pipefail
 	)
 
-	SHELLOPT_UNSET=(
+	__onset_tmpv_shellopt_unset=(
 		allexport
 		keyword
 		monitor
@@ -199,22 +332,22 @@ function _onset_init_shell ()
 		notify
 		posix
 		privileged
-		verbose
-		xtrace
+		#verbose
+		#xtrace
 	)
 
 	set -a -u
 
-	IFS_BAK="${IFS:?"NO_IFS"}"
-	SHOPT_BAK="$(shopt -p)"
-	SHELLOPT_BAK="$(shopt -p -o)"
-	UMASK_BAK="$(umask)"
+	IFS_BAK="${IFS_BAK:-${IFS:?"NO_IFS"}}"
+	__onset_v_shopt_bak="${__onset_v_shopt_bak:-$( shopt -p )}"
+	__onset_v_shellopt_bak="${__onset_v_shellopt_bak:-$( shopt -p -o )}"
+	UMASK_BAK="${UMASK_BAK:-$(umask)}"
 
 	umask ${UMASK}
-	shopt -s ${SHOPT_TOSET[*]}
-	shopt -u ${SHOPT_UNSET[*]}
-	shopt -s -o ${SHELLOPT_TOSET[*]}
-	shopt -u -o ${SHELLOPT_UNSET[*]}
+	shopt -s ${__onset_tmpv_shopt_toset[*]}
+	shopt -u ${__onset_tmpv_shopt_unset[*]}
+	shopt -s -o ${__onset_tmpv_shellopt_toset[*]}
+	shopt -u -o ${__onset_tmpv_shellopt_unset[*]}
 
 	TMPDIR="${TMPDIR:-/tmp}"
 	HOSTNAME="${HOSTNAME:-$(uname -n)}"
@@ -228,7 +361,73 @@ function _onset_init_shell ()
 
 	set +a
 
+	unset ${!__onset_tmpv*}
+
 }
 
-_onset "${@}"
+function __onset_f_show_variables ()
+#
+#
+#
+{
+	declare __onset_f_show_variables_tmpv_{var,val,rgx,ary,dec,end,tab,nln}=
+	printf -v __onset_f_show_variables_tmpv_tab "\t"
+	printf -v __onset_f_show_variables_tmpv_nln "\n"
+	for __onset_f_show_variables_tmpv_var in $( compgen -v )
+	do
+		[[ "${__onset_f_show_variables_tmpv_var:-}" != __onset_f_show_variables_tmpv* ]] || continue
+		__onset_f_show_variables_tmpv_val="$( declare -p "${__onset_f_show_variables_tmpv_var:-}" )"
+		[[ "${__onset_f_show_variables_tmpv_val:-}" =~ ${__onset_f_show_variables_tmpv_nln:-} ]] || {
+			echo "${__onset_f_show_variables_tmpv_val:-}"
+			continue
+		}
+		__onset_f_show_variables_tmpv_rgx="^declare [^= ]*a[^= ]* [^= ]*="
+		[[ "${__onset_f_show_variables_tmpv_val:-}" =~ ${__onset_f_show_variables_tmpv_rgx:-} ]] \
+		&& __onset_f_show_variables_tmpv_ary=1 \
+		|| __onset_f_show_variables_tmpv_ary=0
+		__onset_f_show_variables_tmpv_rgx="^declare [^= ]* [^= ]*="
+		[[ "${__onset_f_show_variables_tmpv_val:-}" =~ ${__onset_f_show_variables_tmpv_rgx:-} ]] || :
+		__onset_f_show_variables_tmpv_dec="${BASH_REMATCH[0]}"
+		[ "${__onset_f_show_variables_tmpv_ary:-}" -eq 1 ] \
+		&& {
+			__onset_f_show_variables_tmpv_dec="${__onset_f_show_variables_tmpv_dec:-}("
+			__onset_f_show_variables_tmpv_end=")"
+		} \
+		|| __onset_f_show_variables_tmpv_end=
+		{
+			printf %s "${__onset_f_show_variables_tmpv_dec:-}"
+			echo "${__onset_f_show_variables_tmpv_val:-}" |
+				tr "\t" "\0" |
+				paste -s - |
+				egrep -ao "(\"([^\"\\]*[\\][\"\\])*[^\"\\]*\"|\[[0-9]*\]=\"([^\"\\]*[\\][\"\\])*[^\"\\]*\")" |
+				sed "s/'/\\\'/g;s/^\([^\"]*\)\"\(.*\)\"\$/\1\$'\2'/;s/[\\][\"]/\"/g" |
+				paste -sd" " - | sed "s/${__onset_f_show_variables_tmpv_tab:-}/\\\n/g" |
+				tr "\0" "\t" |
+				sed "s/${__onset_f_show_variables_tmpv_tab:-}/\\\t/g;s/\$/${__onset_f_show_variables_tmpv_end:-}/"
+		}
+	done
+}
 
+FNCS=(
+	__onset_f_init_shell
+	__onset_f_init_vars
+	__onset_f_init_trap
+	"__onset_f_trap_flag interactive"
+	"__onset_f_trap_flag sourced"
+	"__onset_f_trap_flag pipe_n_redir"
+)
+
+for FNC in "${FNCS[@]:-}"
+do
+	eval ${FNC:-:} || { ERR="${?}"; : echo "[[[${ERR}]]]" 1>&2; break; }
+done
+
+eval "${SHOPT_HISTORY_BAK}"
+
+return ${ERR}
+
+}
+
+#declare -F __onset_f_bail &>/dev/null && __onset_f_bail || :
+
+__onset ${@:+"${@}"}
