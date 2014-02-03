@@ -291,7 +291,7 @@ function __onset_f_init_shell ()
 	__onset_tmpv_shopt_toset=(
 		execfail
 		expand_aliases
-		extdebug
+		#extdebug
 		extglob
 		extquote
 		failglob
@@ -300,7 +300,7 @@ function __onset_f_init_shell ()
 		huponexit
 		nullglob
 		shift_verbose
-		sourcepath
+		#sourcepath
 	)
 
 	__onset_tmpv_shopt_unset=(
