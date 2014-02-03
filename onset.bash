@@ -107,7 +107,8 @@ function __onset_f_trap ()
 	declare MSGS=()
 	I=0
 	[ "${ERR}" -eq 0 ] \
-	|| [ "${SIG}" == "ERROR" ] \
+	|| {
+	[ "${SIG}" == "ERROR" ] \
 	&& {
 		printf "\n" 1>&2
 		IFS="${NLN}"
@@ -132,6 +133,7 @@ function __onset_f_trap ()
 			[ "end" != "${CALL_FNC}" ] || continue
 			err "%s:%s:%s: ..\n" "${CALL_SRC#./}" "${CALL_FNC}" "${CALL_LIN}"
 		done
+	}
 	}
 	case "${SIG}" in
 	( * ) {
